@@ -1,0 +1,209 @@
+---
+title: "Ch. 7 Moving Beyond Linearity"
+author: "Alexandru Papiu"
+date: "August 13, 2016"
+output: html_document
+---
+
+
+```{r, message = FALSE}
+library(ISLR)
+library(Matrix)
+library(glmnet)
+library(dplyr)
+library(ggplot2)
+library(splines)
+library(boot)
+```
+
+```{r}
+y = Wage$wage
+```
+
+### Age versus Wage:
+```{r}
+X = sparse.model.matrix( ~ age, data = Wage)
+```
+
+```{r}
+model = cv.glmnet(X, y)
+sqrt(min(model$cvm))
+```
+
+Adding a polynomial term:
+
+```{r}
+X = sparse.model.matrix( ~ poly(age, 4), data = Wage)
+model = cv.glmnet(X, y)
+sqrt(min(model$cvm))
+```
+
+```{r}
+Wage %>% 
+    ggplot(aes(x = age, y = wage)) +
+    geom_point(alpha = 0.3) +
+    geom_line(aes(y  = predict(model, X)), color = "red", size = 1.5)
+```
+
+
+Use step functions:
+
+```{r}
+X = sparse.model.matrix( ~ cut(age, 6), data = Wage)
+model = cv.glmnet(X, y)
+sqrt(min(model$cvm))
+```
+
+
+```{r}
+Wage %>% 
+    ggplot(aes(x = age, y = wage)) +
+    geom_point(alpha = 0.3) +
+    geom_line(aes(y  = predict(model, X)), color = "red", size = 1.5)
+```
+
+Splines:
+
+```{r}
+X = model.matrix( ~ bs(age), data = Wage)
+model = cv.glmnet(X, y)
+sqrt(min(model$cvm))
+```
+
+```{r}
+Wage %>% 
+    ggplot(aes(x = age, y = wage)) +
+    geom_point(alpha = 0.3) +
+    geom_line(aes(y  = predict(model, X)), color = "red", size = 1.5)
+```
+
+
+### Without regularization:
+
+```{r}
+model = glm(wage ~ poly(age, 3), data = Wage)
+sqrt(cv.glm(data = Wage, glmfit = model, K = 10)$delta)
+```
+
+```{r}
+model = glm(wage ~ bs(age), data = Wage)
+sqrt(cv.glm(data = Wage, glmfit = model, K = 10)$delta)
+```
+
+```{r}
+model = glm(wage ~ ns(age, 3), data = Wage)
+sqrt(cv.glm(data = Wage, glmfit = model, K = 10)$delta)
+```
+
+
+```{r}
+Wage %>% 
+    ggplot(aes(x = age, y = wage)) +
+    geom_point(alpha = 0.3) +
+    geom_line(aes(y  = predict(glm( wage ~ bs(age), data = Wage))), color = "red", size = 1.5) +
+    geom_line(aes(y  = predict(glm( wage ~ poly(age, 2), data = Wage))), color = "blue", size = 1.5) 
+
+```
+
+### Ok now add more variables:
+
+
+```{r}
+model = glm(wage ~ year + bs(age) + education, data = Wage)
+cv.glm(Wage, model, K = 5)$delta %>% sqrt()
+```
+
+```{r}
+model = glm(wage ~ year + bs(age) + bs(as.numeric(education)), data = Wage)
+cv.glm(Wage, model, K = 5)$delta %>% sqrt()
+```
+
+```{r}
+formula = wage ~ year + bs(age) + bs(as.numeric(education)) + jobclass + health + health_ins
+model = glm(formula, data = Wage)
+cv.glm(Wage, model, K = 5)$delta %>% sqrt()
+```
+
+No Regularization:
+
+```{r}
+formula = wage ~ year + bs(age) + education + jobclass + health + health_ins + race + maritl
+model = glm(formula, data = Wage)
+cv.glm(Wage, model, K = 5)$delta %>% sqrt()
+```
+
+Glmnet:
+
+```{r}
+X = sparse.model.matrix( ~ year + bs(age) + education + jobclass + health + health_ins + race + maritl -1, data = Wage)
+model = cv.glmnet(X, y)
+model$cvm %>% min %>% sqrt
+```
+
+
+Random forest:
+
+```{r}
+library(ranger)
+model_rf = ranger(wage ~ year + age + education + jobclass + health + health_ins + race + maritl, data = Wage, respect.unordered.factors = FALSE)
+model_rf$prediction.error %>% sqrt()
+```
+
+Xgboost:
+
+```{r}
+library(xgboost)
+
+X = sparse.model.matrix( ~ year + age + education + jobclass + health + health_ins + race + maritl -1, data = Wage)
+
+cv.error = xgb.cv(data = X,
+       label = y,
+       #booster = "gblinear",
+       nrounds = 100,
+       max_depth = 3,
+       eta = 0.1,
+       nfold = 5,
+       early.stopping.rounds = 5,
+       maximize = FALSE,
+       verbose = 0)
+
+cv.error$test.rmse.mean %>% min
+```
+
+```{r}
+model = xgboost(data = X,
+       label = y,
+       #booster = "gblinear",
+       nrounds = 100,
+       max_depth = 3,
+       eta = 0.1,
+       early.stopping.rounds = 5,
+       maximize = FALSE,
+       verbose = 0)
+```
+
+
+
+One thing to note here is that xgboost gblinear performs slighlty worse than glmnet.
+
+### Conclusions:
+
+- adding non-linear terms in formulas is easy - ust use `poly(feat, 3)` or `bs(feat)`
+
+- the above works also for `sparse.model.matrix`
+
+- glm is easy to crossvalidate:
+
+```{r, eval=F}
+model = glm(formula, data)
+cv.glm(model, data, 5)$delta
+```
+
+- if you add correct non-linear features - generalized additive models can be just as good as rf's or xgboosts.
+
+- use xgboost tree depth = 1 - xgboost linear to see how well a linear model can perform
+
+- use xgboost best depth - xgboost depth = 1 to see how well a additive model can perform
+
+- how can we use xgboost to 
+
